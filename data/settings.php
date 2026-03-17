@@ -1,0 +1,6 @@
+<?php
+
+const C_REST_WEB_HOOK_URL = "PATH_TO_WEBHOOK";
+const DEFAULT_EMPLOYER_ID = 121;
+
+

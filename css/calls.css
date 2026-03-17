@@ -1,0 +1,63 @@
+.dn{
+    display: none;
+}
+
+.vh{
+    visibility: hidden;
+}
+
+header{
+    margin: 1rem 0 2rem;
+}
+
+.calls-filter{
+    background: #d8e3f4;
+    border-radius: 15px;
+    padding: 1rem 1.5rem;
+}
+
+.lbl{
+    display: block;
+    font-size: .95rem;
+    margin-bottom: .5rem;
+}
+
+.err-mess{
+    color: #f00;
+    font-size: .8rem;
+}
+
+.calls-period{
+    margin-bottom: .5rem;
+}
+
+.calls-period .form-label:last-child{
+    margin-left: 1rem;
+}
+
+.calls-period span.lbl{
+    margin-bottom: 0;
+}
+
+.process-block {
+    width: 20px;
+    height: 20px;
+    margin-left: 1rem;
+}
+
+.calls-result{
+    margin-top: 1.2rem;
+}
+
+.bf-tbl{
+    margin-bottom: 1rem;
+}
+
+.btn-wrap{
+    text-align: right;
+}
+
+.table{
+    font-size: .9rem;
+    margin-bottom: 3rem;
+}

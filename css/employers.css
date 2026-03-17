@@ -1,0 +1,40 @@
+
+header{
+    margin: 1rem 0 2rem;
+}
+
+.dep-tree{
+    font-size: .9rem;
+    margin-bottom: 3rem;
+    background: #bce5f7;
+    padding: 1rem;
+    border-radius: 10px;
+    width: 49%;
+}
+
+.dep-tree a{
+    color: #2e4781;
+}
+
+.emp-list{
+    font-size: .9rem;
+    margin-bottom: 3rem;
+    background: #bce5f7;
+    padding: 1rem;
+    border-radius: 10px;
+    width: 49%;
+}
+
+.emp-wrap{
+    margin-bottom: 1rem;
+    color: #2e4781;
+}
+
+.emp-wrap label{
+    display: block;
+    line-height: 1.7em;    
+}
+
+.emp-wrap label input{
+    margin-right: .7rem;
+}

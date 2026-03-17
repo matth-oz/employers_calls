@@ -1,0 +1,6 @@
+{
+    "require": {
+        "avadim/fast-excel-writer": "^6.12",
+        "avadim/fast-excel-reader": "^3.0"
+    }
+}

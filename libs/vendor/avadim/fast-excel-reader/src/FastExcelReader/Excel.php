@@ -1,0 +1,1804 @@
+<?php
+
+namespace avadim\FastExcelReader;
+
+use avadim\FastExcelHelper\Helper;
+use avadim\FastExcelReader\Csv\CsvOptions;
+use avadim\FastExcelReader\Csv\CsvReader;
+use avadim\FastExcelReader\Interfaces\InterfaceBookReader;
+use avadim\FastExcelReader\Interfaces\InterfaceSheetReader;
+use avadim\FastExcelReader\Interfaces\InterfaceXmlReader;
+
+/**
+ * Class Excel
+ *
+ * @package avadim\FastExcelReader
+ */
+class Excel implements InterfaceBookReader
+{
+    public const EXCEL_2007_MAX_ROW = 1048576;
+    public const EXCEL_2007_MAX_COL = 16384;
+
+    public const KEYS_ORIGINAL = 0;
+    public const KEYS_FIRST_ROW = 1;
+    public const KEYS_ROW_ZERO_BASED = 2;
+    public const KEYS_COL_ZERO_BASED = 4;
+    public const KEYS_ZERO_BASED = 6; // KEYS_ROW_ZERO_BASED & KEYS_COL_ZERO_BASED
+    public const KEYS_ROW_ONE_BASED = 8;
+    public const KEYS_COL_ONE_BASED = 16;
+    public const KEYS_ONE_BASED = 24; // KEYS_ROW_ONE_BASED & KEYS_COL_ONE_BASED
+    public const KEYS_RELATIVE = 32;
+    public const KEYS_SWAP = 64;
+
+    // nextRow() returns cells & row attributes
+    // ['__cells' => [...], '__row' => [...]]
+    public const RESULT_MODE_ROW = 1024;
+
+    public const TRIM_STRINGS = 2048;
+    public const TREAT_EMPTY_STRING_AS_EMPTY_CELL = 4096;
+
+    public const INDEXED_COLORS = [
+        0  => 'FF000000', // Black
+        1  => 'FFFFFFFF', // White
+        2  => 'FFFF0000', // Red
+        3  => 'FF00FF00', // Green
+        4  => 'FF0000FF', // Blue
+        5  => 'FFFFFF00', // Yellow
+        6  => 'FFFF00FF', // Magenta
+        7  => 'FF00FFFF', // Cyan
+
+        8  => 'FF000000', // Black
+        9  => 'FFFFFFFF', // White
+        10 => 'FFFF0000', // Red
+        11 => 'FF00FF00', // Green
+        12 => 'FF0000FF', // Blue
+        13 => 'FFFFFF00', // Yellow
+        14 => 'FFFF00FF', // Magenta
+        15 => 'FF00FFFF', // Cyan
+
+        16 => 'FF800000', // Dark Red
+        17 => 'FF008000', // Dark Green
+        18 => 'FF000080', // Dark Blue
+        19 => 'FF808000', // Olive
+        20 => 'FF800080', // Purple
+        21 => 'FF008080', // Teal
+        22 => 'FFC0C0C0', // Silver
+        23 => 'FF808080', // Gray
+
+        24 => 'FF9999FF', // Light Blue
+        25 => 'FF993366', // Plum
+        26 => 'FFFFFFCC', // Light Yellow
+        27 => 'FFCCFFFF', // Light Cyan
+        28 => 'FF660066', // Dark Purple
+        29 => 'FFFF8080', // Coral
+        30 => 'FF0066CC', // Ocean Blue
+        31 => 'FFCCCCFF', // Ice Blue
+
+        32 => 'FF000080', // Navy
+        33 => 'FFFF00FF', // Pink
+        34 => 'FFFFFF00', // Yellow
+        35 => 'FF00FFFF', // Cyan
+        36 => 'FF800080', // Purple
+        37 => 'FF800000', // Brown
+        38 => 'FF008080', // Teal
+        39 => 'FF0000FF', // Blue
+
+        40 => 'FF00CCFF', // Light Blue
+        41 => 'FFCCFFFF', // Aqua
+        42 => 'FFCCFFCC', // Light Green
+        43 => 'FFFFFF99', // Light Yellow
+        44 => 'FF99CCFF', // Sky Blue
+        45 => 'FFFF99CC', // Rose
+        46 => 'FFCC99FF', // Lavender
+        47 => 'FFFFCC99', // Tan
+
+        48 => 'FF3366FF', // Bright Blue
+        49 => 'FF33CCCC', // Turquoise
+        50 => 'FF99CC00', // Lime
+        51 => 'FFFFCC00', // Gold
+        52 => 'FFFF9900', // Orange
+        53 => 'FFFF6600', // Orange Red
+        54 => 'FF666699', // Blue Gray
+        55 => 'FF969696', // Gray 40%
+
+        56 => 'FF003366', // Dark Teal
+        57 => 'FF339966', // Sea Green
+        58 => 'FF003300', // Dark Green
+        59 => 'FF333300', // Dark Olive
+        60 => 'FF993300', // Brown
+        61 => 'FF993366', // Burgundy
+        62 => 'FF333399', // Indigo
+        63 => 'FF333333', // Gray 80%
+    ];
+
+
+    protected string $file;
+
+    /** @var Reader */
+    protected Reader $xmlReader;
+
+    protected array $fileList = [];
+
+    protected array $relations = [];
+
+    protected array $sharedStrings = [];
+
+    protected array $styles = [];
+
+    protected array $valueMetadataImages = [];
+
+    /** @var Sheet[] */
+    protected array $sheets = [];
+
+    protected int $defaultSheetId;
+
+    protected ?string $dateFormat = null;
+
+    /** @var \Closure|callable|bool|null  */
+    protected $dateFormatter = null;
+
+    protected bool $date1904 = false;
+    protected string $timezone;
+
+    protected array $builtinFormats = [];
+
+    protected array $names = [];
+
+    protected ?array $themeColors = null;
+
+    protected int $countImages = -1; // -1 - unknown
+
+
+    /**
+     * Excel constructor
+     *
+     * @param string|null $file
+     * @param string|null $tempDir
+     */
+    public function __construct(?string $file = null, ?string $tempDir = '')
+    {
+        $this->builtinFormats = [
+            0 => ['pattern' => 'General', 'category' => 'general'],
+            1 => ['pattern' => '0', 'category' => 'number'],
+            2 => ['pattern' => '0.00', 'category' => 'number'],
+            3 => ['pattern' => '#,##0', 'category' => 'number'],
+            4 => ['pattern' => '#,##0.00', 'category' => 'number'],
+            9 => ['pattern' => '0%', 'category' => 'number'],
+            10 => ['pattern' => '0.00%', 'category' => 'number'],
+            11 => ['pattern' => '0.00E+00', 'category' => 'number'],
+            12 => ['pattern' => '# ?/?', 'category' => 'general'],
+            13 => ['pattern' => '# ??/??', 'category' => 'general'],
+            14 => ['pattern' => 'mm-dd-yy', 'category' => 'date'], // Short date
+            15 => ['pattern' => 'd-mmm-yy', 'category' => 'date'],
+            16 => ['pattern' => 'd-mmm', 'category' => 'date'],
+            17 => ['pattern' => 'mmm-yy', 'category' => 'date'],
+            18 => ['pattern' => 'h:mm AM/PM', 'category' => 'date'],
+            19 => ['pattern' => 'h:mm:ss AM/PM', 'category' => 'date'],
+            20 => ['pattern' => 'h:mm', 'category' => 'date'], // Short time
+            21 => ['pattern' => 'h:mm:ss', 'category' => 'date'], // Long time
+            22 => ['pattern' => 'm/d/yy h:mm', 'category' => 'date'], // Date-time
+            37 => ['pattern' => '#,##0 ;(#,##0)', 'category' => 'number'],
+            38 => ['pattern' => '#,##0 ;[Red](#,##0)', 'category' => 'number'],
+            39 => ['pattern' => '#,##0.00;(#,##0.00)', 'category' => 'number'],
+            40 => ['pattern' => '#,##0.00;[Red](#,##0.00)', 'category' => 'number'],
+            45 => ['pattern' => 'mm:ss', 'category' => 'date'],
+            46 => ['pattern' => '[h]:mm:ss', 'category' => 'date'],
+            47 => ['pattern' => 'mmss.0', 'category' => 'date'],
+            48 => ['pattern' => '##0.0E+0', 'category' => 'number'],
+            49 => ['pattern' => '@', 'category' => 'string'],
+        ];
+
+        if (class_exists('IntlDateFormatter', false)) {
+            $formatter = new \IntlDateFormatter(null, \IntlDateFormatter::SHORT, \IntlDateFormatter::NONE);
+            $pattern = $formatter->getPattern();
+            $this->builtinFormats[14]['pattern'] = str_replace('#', 'yy', str_replace(['M', 'y'], ['m', 'yyyy'], str_replace('yy', '#', $pattern)));
+            if (preg_match('/([^a-z])/i', $pattern, $m)) {
+                $dateDelim = $m[1];
+                $this->builtinFormats[15]['pattern'] = str_replace('-', $dateDelim, $this->builtinFormats[15]['pattern']);
+                $this->builtinFormats[16]['pattern'] = str_replace('-', $dateDelim, $this->builtinFormats[16]['pattern']);
+                $this->builtinFormats[17]['pattern'] = str_replace('-', $dateDelim, $this->builtinFormats[17]['pattern']);
+            }
+
+            $formatter = new \IntlDateFormatter(null, \IntlDateFormatter::NONE, \IntlDateFormatter::SHORT);
+            $this->builtinFormats[20]['pattern'] = str_replace('HH', 'h', $formatter->getPattern());
+
+            $formatter = new \IntlDateFormatter(null, \IntlDateFormatter::NONE, \IntlDateFormatter::MEDIUM);
+            $this->builtinFormats[21]['pattern'] = str_replace('HH', 'h', $formatter->getPattern());
+
+            $this->builtinFormats[22]['pattern'] = $this->builtinFormats[14]['pattern'] . ' ' . $this->builtinFormats[20]['pattern'];
+        }
+
+        $this->timezone = date_default_timezone_get();
+        $this->dateFormatter = function ($value, $format = null) {
+            if ($format || $this->dateFormat) {
+                return gmdate($format ?: $this->dateFormat, $value);
+            }
+            return $value;
+        };
+
+        if (!empty($tempDir)) {
+            self::setTempDir($tempDir);
+        }
+
+        if ($file) {
+            $this->file = $file;
+            $this->_prepare($file);
+        }
+    }
+
+    /**
+     * Set directory for temporary files
+     *
+     * @param string $tempDir
+     */
+    public static function setTempDir($tempDir)
+    {
+        Reader::setTempDir($tempDir);
+    }
+
+
+    /**
+     * @param string $file
+     */
+    protected function _prepare(string $file): void
+    {
+        $this->xmlReader = static::createReader($file);
+        $this->fileList = $this->xmlReader->fileList();
+        foreach ($this->fileList as $fileName) {
+            if (strpos($fileName, 'xl/drawings/drawing') === 0) {
+                $this->relations['drawings'][] = $fileName;
+            }
+            elseif (strpos($fileName, 'xl/media/') === 0) {
+                $this->relations['media'][] = $fileName;
+            }
+        }
+
+        $innerFile = 'xl/_rels/workbook.xml.rels';
+        $this->xmlReader->openZip($innerFile);
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT && $this->xmlReader->name === 'Relationship') {
+                $type = basename($this->xmlReader->getAttribute('Type'));
+                if ($type) {
+                    $this->relations[$type][$this->xmlReader->getAttribute('Id')] = 'xl/' . ltrim($this->xmlReader->getAttribute('Target'), '/xl');
+                }
+            }
+        }
+        $this->xmlReader->close();
+
+        if (isset($this->relations['worksheet'])) {
+            $this->_loadSheets();
+        }
+
+        if (isset($this->relations['sharedStrings'])) {
+            $innerFile = $this->checkInnerFile(reset($this->relations['sharedStrings']));
+            if ($innerFile) {
+                $this->_loadSharedStrings($innerFile);
+            }
+        }
+
+        if (isset($this->relations['theme'])) {
+            $innerFile = $this->checkInnerFile(reset($this->relations['theme']));
+            if ($innerFile) {
+                $this->_loadThemes($innerFile);
+            }
+        }
+
+        if (isset($this->relations['styles'])) {
+            $innerFile = $this->checkInnerFile(reset($this->relations['styles']));
+            if ($innerFile) {
+                $this->_loadStyles($innerFile);
+            }
+        }
+
+        if (isset($this->relations['sheetMetadata'], $this->relations['richValueRel'])) {
+            $metadataFile = $this->checkInnerFile(reset($this->relations['sheetMetadata']));
+            $richValueRelFile = $this->checkInnerFile(reset($this->relations['richValueRel']));
+            $this->_loadMetadataImages($metadataFile, $richValueRelFile);
+        }
+
+        if ($this->sheets) {
+            // set current sheet
+            $this->selectFirstSheet();
+        }
+    }
+
+    /**
+     * @param string $innerFile
+     *
+     * @return null|string
+     */
+    protected function checkInnerFile(string $innerFile): ?string
+    {
+        foreach ($this->fileList as $filename) {
+            if (strcasecmp($innerFile, $filename) === 0) {
+                return $filename;
+            }
+        }
+        return null;
+    }
+
+    protected function _loadSheets(): void
+    {
+        $innerFile = $this->checkInnerFile('xl/workbook.xml');
+        $this->xmlReader->openZip($innerFile);
+
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT) {
+                $xmlReaderName = $this->xmlReader->name;
+                if ($xmlReaderName === 'workbookPr') {
+                    $date1904 = (string)$this->xmlReader->getAttribute('date1904');
+                    if ($date1904 === '1' || $date1904 === 'true') {
+                        $this->date1904 = true;
+                    }
+                }
+                elseif ($xmlReaderName === 'sheet' || $xmlReaderName === 'x:sheet') {
+                    $rId = $this->xmlReader->getAttribute('r:id');
+                    $sheetId = $this->xmlReader->getAttribute('sheetId');
+                    $path = $this->relations['worksheet'][$rId] ?? null;
+                    // ignoring non-existent sheets
+                    if ($path) {
+                        $sheetName = $this->xmlReader->getAttribute('name');
+                        $this->sheets[$sheetId] = static::createSheet($sheetName, $sheetId, $this->file, $this->relations['worksheet'][$rId], $this);
+                        //$this->sheets[$sheetId]->excel = $this;
+                        if ($this->sheets[$sheetId]->isActive()) {
+                            $this->defaultSheetId = $sheetId;
+                        }
+                        if ($state = $this->xmlReader->getAttribute('state')) {
+                            $this->sheets[$sheetId]->setState($state);
+                        }
+                    }
+                }
+                elseif ($xmlReaderName === 'definedName') {
+                    $name = $this->xmlReader->getAttribute('name');
+                    $address = $this->xmlReader->readString();
+                    $this->names[$name] = $address;
+                }
+            }
+        }
+        $this->xmlReader->close();
+    }
+
+    /**
+     * @param string $innerFile
+     */
+    protected function _loadSharedStrings(string $innerFile)
+    {
+        $this->xmlReader->openZip($innerFile);
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT && $this->xmlReader->name === 'si' && $node = $this->xmlReader->expand()) {
+                $this->sharedStrings[] = $node->textContent;
+            }
+        }
+        $this->xmlReader->close();
+    }
+
+    /**
+     * @param string|null $innerFile
+     *
+     * @return void
+     */
+    protected function _loadThemes(?string $innerFile = null)
+    {
+        $innerFile = $this->checkInnerFile($innerFile ?: 'xl/theme/theme1.xml');
+        $this->xmlReader->openZip($innerFile);
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT && $this->xmlReader->localName === 'clrScheme') {
+                break;
+            }
+        }
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::END_ELEMENT && $this->xmlReader->localName === 'clrScheme') {
+                break;
+            }
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT && $this->xmlReader->localName === 'srgbClr') {
+                $this->themeColors[] = '#' . $this->xmlReader->getAttribute('val');
+            }
+            elseif ($this->xmlReader->nodeType === \XMLReader::ELEMENT && $this->xmlReader->localName === 'sysClr') {
+                if ($this->xmlReader->getAttribute('val') === 'windowText') {
+                    $this->themeColors[] = '#ffffff';
+                }
+                elseif ($this->xmlReader->getAttribute('val') === 'window') {
+                    $this->themeColors[] = '#202020';
+                }
+                elseif ($lastClr = $this->xmlReader->getAttribute('lastClr')) {
+                    $this->themeColors[] = '#' . $lastClr;
+                }
+                else {
+                    $this->themeColors[] = '';
+                }
+            }
+        }
+    }
+
+    /**
+     * @param string|null $innerFile
+     */
+    protected function _loadStyles(?string $innerFile = null)
+    {
+        $innerFile = $this->checkInnerFile($innerFile ?: 'xl/styles.xml');
+        $this->xmlReader->openZip($innerFile);
+        $styleType = '';
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT) {
+                $nodeName = $this->xmlReader->name;
+                if ($nodeName === 'cellStyleXfs' || $nodeName === 'cellXfs') {
+                    $styleType = $nodeName;
+                    continue;
+                }
+                if ($nodeName === 'numFmt') {
+                    $numFmtId = (int)$this->xmlReader->getAttribute('numFmtId');
+                    $formatCode = $this->xmlReader->getAttribute('formatCode');
+                    $numFmts[$numFmtId] = $formatCode;
+                }
+                elseif ($nodeName === 'xf') {
+                    $numFmtId = (int)$this->xmlReader->getAttribute('numFmtId');
+                    $formatCode = $numFmts[$numFmtId] ?? '';
+                    if ($this->_isDatePattern($numFmtId, $formatCode)) {
+                        $this->styles[$styleType][] = ['format' => $formatCode, 'formatType' => 'd'];
+                    }
+                    elseif ($formatCode) {
+                        if ($this->_isNumberPattern($numFmtId, $formatCode)) {
+                            $this->styles[$styleType][] = ['format' => $formatCode, 'formatType' => 'n'];
+                        }
+                        else {
+                            $this->styles[$styleType][] = ['format' => $formatCode];
+                        }
+                    }
+                    elseif ($numFmtId > 0 && isset($this->builtinFormats[$numFmtId]['category'])) {
+                        $this->styles[$styleType][] = ['formatType' => $this->builtinFormats[$numFmtId]['category']];
+                    }
+                    else {
+                        $this->styles[$styleType][] = null;
+                    }
+                }
+            }
+        }
+        $this->xmlReader->close();
+    }
+
+    /**
+     * @param string|null $metadataFile
+     */
+    protected function _loadMetadataImages(string $metadataFile, string $richValueRelFile)
+    {
+        $this->xmlReader->openZip($metadataFile);
+        $metadataTypesCount = 0;
+        $metadataTypes = [];
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->name === 'metadataType') {
+                if ($this->xmlReader->nodeType === \XMLReader::ELEMENT) {
+                    $metadataTypesCount++;
+                    if ((string)$this->xmlReader->getAttribute('name') === 'XLRICHVALUE') {
+                        // we need only <metadataType name="XLRICHVALUE" ...>
+                        $metadataTypes[$metadataTypesCount] = 'XLRICHVALUE';
+                    }
+                }
+                else {
+                    break;
+                }
+            }
+        }
+        $futureMetadata = [];
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->name === 'futureMetadata') {
+                if ($this->xmlReader->nodeType === \XMLReader::ELEMENT && (string)$this->xmlReader->getAttribute('name') === 'XLRICHVALUE') {
+                    while ($this->xmlReader->read()) {
+                        if ($this->xmlReader->name === 'xlrd:rvb') {
+                            $futureMetadata[] = (int)$this->xmlReader->getAttribute('i');
+                        }
+                        elseif ($this->xmlReader->name === 'futureMetadata' && $this->xmlReader->nodeType === \XMLReader::END_ELEMENT) {
+                            break 2;
+                        }
+                    }
+                }
+                elseif ($this->xmlReader->nodeType === \XMLReader::END_ELEMENT) {
+                    break;
+                }
+            }
+        }
+
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->name === 'rc') {
+                $type = (int)$this->xmlReader->getAttribute('t');
+                $value = (int)$this->xmlReader->getAttribute('v');
+                if (isset($metadataTypes[$type])) { // metadataType name="XLRICHVALUE"
+                    if (isset($futureMetadata[$value])) {
+                        $this->valueMetadataImages[] = ['i' => $futureMetadata[$value]];
+                    }
+                }
+            }
+        }
+        $this->xmlReader->close();
+
+        $this->xmlReader->openZip($richValueRelFile);
+        $count = 0;
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->name === 'rel' && ($rId = $this->xmlReader->getAttribute('r:id'))) {
+                $this->valueMetadataImages[$count++]['r_id'] = $rId;
+            }
+        }
+        $this->xmlReader->close();
+
+        $images = [];
+        $xmlRels = 'xl/richData/_rels/richValueRel.xml.rels';
+        $this->xmlReader->openZip($xmlRels);
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->name === 'Relationship' && $this->xmlReader->nodeType === \XMLReader::ELEMENT && ($Id = (string)$this->xmlReader->getAttribute('Id'))) {
+                if (substr((string)$this->xmlReader->getAttribute('Type'), -6) === '/image') {
+                    $images[$Id] = (string)$this->xmlReader->getAttribute('Target');
+                }
+            }
+        }
+        $this->xmlReader->close();
+
+        foreach ($this->valueMetadataImages as $index => $metadataImage) {
+            $rId = $this->valueMetadataImages[$index]['r_id'];
+            if (isset($images[$rId])) {
+                $this->valueMetadataImages[$index]['file_name'] = str_replace('../media/', 'xl/media/', $images[$rId]);
+            }
+        }
+    }
+
+    /**
+     * Get image file name from metadata by index
+     *
+     * @param int $vmIndex
+     *
+     * @return string|null
+     */
+    public function metadataImage(int $vmIndex): ?string
+    {
+        return $this->valueMetadataImages[$vmIndex - 1]['file_name'] ?? null;
+    }
+
+    /**
+     * @param int|null $numFmtId
+     * @param string $pattern
+     *
+     * @return bool
+     */
+    protected function _isDatePattern(?int $numFmtId, string $pattern): bool
+    {
+        if ($numFmtId && (
+            ($numFmtId >= 14 && $numFmtId <= 22)
+            || ($numFmtId >= 45 && $numFmtId <= 47)
+            || ($numFmtId >= 27 && $numFmtId <= 36)
+            || ($numFmtId >= 50 && $numFmtId <= 58)
+            || ($numFmtId >= 71 && $numFmtId <= 81)
+            )) {
+            return true;
+        }
+        if ($pattern) {
+            if (preg_match('/^\[\$-[0-9A-F]{3,4}].+/', $pattern)) {
+                return true;
+            }
+            return (bool)preg_match('/yy|mm|dd|h|MM|ss|[\/\.][dm](;.+)?/', $pattern);
+        }
+
+        return false;
+    }
+
+    /**
+     * @param int|null $numFmtId
+     * @param string $pattern
+     *
+     * @return bool
+     */
+    protected function _isNumberPattern(?int $numFmtId, string $pattern): bool
+    {
+        if (preg_match('/^0+(\.0+)?$/', $pattern)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param $root
+     * @param $tagName
+     *
+     * @return void
+     */
+    protected function _loadStyleNumFmts($root, $tagName)
+    {
+        foreach ($this->builtinFormats as $key => $val) {
+            $this->styles['_'][$tagName][$key] = [
+                'format-num-id' => $key,
+                'format-pattern' => $val['pattern'],
+                'format-category' => $val['category'],
+            ];
+        }
+        if ($root) {
+            foreach ($root->childNodes as $child) {
+                $numFmtId = $child->getAttribute('numFmtId');
+                $formatCode = $child->getAttribute('formatCode');
+                if ($numFmtId !== '' && $formatCode !== '') {
+                    $node = [
+                        'format-num-id' => (int)$numFmtId,
+                        'format-pattern' => $formatCode,
+                        'format-category' => $this->_isDatePattern($numFmtId, $formatCode) ? 'date' : '',
+                    ];
+                    $this->styles['_'][$tagName][$node['format-num-id']] = $node;
+                }
+            }
+        }
+    }
+
+    /**
+     * @param $root
+     * @param $tagName
+     *
+     * @return void
+     */
+    protected function _loadStyleFonts($root, $tagName)
+    {
+        foreach ($root->childNodes as $font) {
+            $node = [];
+            foreach ($font->childNodes as $fontStyle) {
+                if ($fontStyle->nodeName === 'b') {
+                    $node['font-style-bold'] = 1;
+                }
+                elseif ($fontStyle->nodeName === 'u') {
+                    $node['font-style-underline'] = ($fontStyle->getAttribute('formatCode') === 'double' ? 2 : 1);
+                }
+                elseif ($fontStyle->nodeName === 'i') {
+                    $node['font-style-italic'] = 1;
+                }
+                elseif ($fontStyle->nodeName === 'strike') {
+                    $node['font-style-strike'] = 1;
+                }
+                elseif ($fontStyle->nodeName === 'color') {
+                    $color = $this->_extractColor($fontStyle);
+                    if ($color) {
+                        $node['font-color'] = $color;
+                    }
+                }
+                elseif (($v = $fontStyle->getAttribute('val')) !== '') {
+                    if ($fontStyle->nodeName === 'sz') {
+                        $name = 'font-size';
+                    }
+                    else {
+                        $name = 'font-' . $fontStyle->nodeName;
+                    }
+                    $node[$name] = $v;
+                }
+            }
+            $this->styles['_'][$tagName][] = $node;
+        }
+    }
+
+    /**
+     * @param $root
+     * @param $tagName
+     *
+     * @return void
+     */
+    protected function _loadStyleFills($root, $tagName)
+    {
+        foreach ($root->childNodes as $fill) {
+            $node = [];
+            foreach ($fill->childNodes as $patternFill) {
+                if (($v = $patternFill->getAttribute('patternType')) !== '') {
+                    $node['fill-pattern'] = $v;
+                }
+                foreach ($patternFill->childNodes as $child) {
+                    if ($child->nodeName === 'fgColor') {
+                        $color = $this->_extractColor($child);
+                        if ($color) {
+                            $node['fill-color'] = $color;
+                        }
+                    }
+                }
+            }
+            $this->styles['_'][$tagName][] = $node;
+        }
+    }
+
+    /**
+     * @param $node
+     *
+     * @return string
+     */
+    protected function _extractColor($node): string
+    {
+        if ($rgb = $node->getAttribute('rgb')) {
+            return '#' . substr($rgb, 2);
+        }
+        $theme = $node->getAttribute('theme');
+        if ($theme !== null && $theme !== '') {
+            $color = $this->themeColors[(int)$theme] ?? '';
+            if ($color) {
+                $tint = (float)$node->getAttribute('tint');
+/*
+                if (!empty($tint)) {
+                    $color0 = Helper::correctColor($color, $tint);
+                }
+*/
+                if ($tint !== 0.0) {
+                    if ($tint === 1.0) {
+                        $color = '#FFFFFF';
+                    }
+                    elseif ($tint === -1.0) {
+                        $color = '#000000';
+                    }
+                    else {
+                        $r = hexdec(substr($color, 1, 2));
+                        $g = hexdec(substr($color, 3, 2));
+                        $b = hexdec(substr($color, 5, 2));
+                        if ($tint > 0) {
+                            $r = round($r + (255 - $r) * $tint);
+                            $g = round($g + (255 - $g) * $tint);
+                            $b = round($b + (255 - $b) * $tint);
+                        }
+                        else {
+                            $r = round($r * (1 + $tint));
+                            $g = round($g * (1 + $tint));
+                            $b = round($b * (1 + $tint));
+                        }
+                        $color = '#'
+                            . strtoupper(str_pad(dechex($r), 2, '0', STR_PAD_LEFT))
+                            . strtoupper(str_pad(dechex($g), 2, '0', STR_PAD_LEFT))
+                            . strtoupper(str_pad(dechex($b), 2, '0', STR_PAD_LEFT));
+                    }
+                }
+            }
+            return $color;
+        }
+
+        if ($indexed = $node->getAttribute('indexed')) {
+            if ($indexed === '64') {
+                return '#000000';
+            }
+            if (!isset(self::INDEXED_COLORS[$indexed])) {
+                return '#' . substr(self::INDEXED_COLORS[$indexed], 2);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * @param $root
+     * @param $tagName
+     *
+     * @return void
+     */
+    protected function _loadStyleBorders($root, $tagName)
+    {
+        foreach ($root->childNodes as $border) {
+            $node = [];
+            foreach ($border->childNodes as $side) {
+                if (($v = $side->getAttribute('style')) !== '') {
+                    $node['border-' . $side->nodeName . '-style'] = $v;
+                }
+                else {
+                    $node['border-' . $side->nodeName . '-style'] = null;
+                }
+                foreach ($side->childNodes as $child) {
+                    if ($child->nodeName === 'color') {
+                        $node['border-' . $side->nodeName . '-color'] = $this->_extractColor($child);
+                        /*
+                        if ($attr = $child->getAttribute('rgb')) {
+                            $node['border-' . $side->nodeName . '-color'] = '#' . substr($attr, 2);
+                        }
+                        elseif ($attr = $child->getAttribute('indexed')) {
+                            $node['border-' . $side->nodeName . '-color'] = '#' . substr($attr, 2);
+                        }
+                        else {
+                            $node['border-' . $side->nodeName . '-color'] = null;
+                        }
+                        */
+                    }
+                }
+            }
+            $this->styles['_'][$tagName][] = $node;
+        }
+    }
+
+    /**
+     * @param $root
+     * @param $tagName
+     *
+     * @return void
+     */
+    protected function _loadStyleCellXfs($root, $tagName)
+    {
+        $attributes = ['numFmtId', 'fontId', 'fillId', 'borderId', 'xfId'];
+        foreach ($root->childNodes as $xf) {
+            $node = [];
+            foreach ($attributes as $attribute) {
+                if (($v = $xf->getAttribute($attribute)) !== '') {
+                    if (substr($attribute, -2) === 'Id') {
+                        $node[$attribute] = (int)$v;
+                    }
+                    else {
+                        $node[$attribute] = $v;
+                    }
+                }
+            }
+            foreach ($xf->childNodes as $child) {
+                if ($child->nodeName === 'alignment') {
+                    if ($v = $child->getAttribute('horizontal')) {
+                        $node['format']['format-align-horizontal'] = $v;
+                    }
+                    if ($v = $child->getAttribute('vertical')) {
+                        $node['format']['format-align-vertical'] = $v;
+                    }
+                    if (($v = $child->getAttribute('wrapText')) && ($v === 'true')) {
+                        $node['format']['format-wrap-text'] = 1;
+                    }
+                }
+            }
+            $this->styles['_'][$tagName][] = $node;
+        }
+    }
+
+    /**
+     * @param string|null $innerFile
+     */
+    protected function _loadCompleteStyles(?string $innerFile = null)
+    {
+        if (!$innerFile) {
+            $innerFile = 'xl/styles.xml';
+        }
+        $this->xmlReader->openZip($innerFile);
+
+        while ($this->xmlReader->read()) {
+            if ($this->xmlReader->nodeType === \XMLReader::ELEMENT) {
+                switch ($this->xmlReader->name) {
+                    case 'numFmts':
+                        $this->_loadStyleNumFmts($this->xmlReader->expand(), 'numFmts');
+                        break;
+                    case 'fonts':
+                        $this->_loadStyleFonts($this->xmlReader->expand(), 'fonts');
+                        break;
+                    case 'fills':
+                        $this->_loadStyleFills($this->xmlReader->expand(), 'fills');
+                        break;
+                    case 'borders':
+                        $this->_loadStyleBorders($this->xmlReader->expand(), 'borders');
+                        break;
+                    case 'cellStyleXfs':
+                        $this->_loadStyleCellXfs($this->xmlReader->expand(), 'cellStyleXfs');
+                        break;
+                    case 'cellXfs':
+                        $this->_loadStyleCellXfs($this->xmlReader->expand(), 'cellXfs');
+                        break;
+                    default:
+                        //
+                }
+            }
+        }
+        if (empty($this->styles['_']['numFmts'])) {
+            $this->_loadStyleNumFmts(null, 'numFmts');
+        }
+        $this->xmlReader->close();
+    }
+
+    /**
+     * Open XLSX file
+     *
+     * @param string $file
+     *
+     * @return Excel
+     */
+    public static function open(string $file): Excel
+    {
+        return new self($file);
+    }
+
+    /**
+     * Open CSV file
+     *
+     * @param string $file
+     * @param CsvOptions|array|null $options
+     *
+     * @return CsvReader
+     */
+    public static function openCsv(string $file, $options = []): CsvReader
+    {
+        return new CsvReader($file, $options);
+    }
+
+    /**
+     * Validate XLSX file
+     *
+     * @param string $file
+     * @param array|null $errors
+     *
+     * @return bool
+     */
+    public static function validate(string $file, ?array &$errors = []): bool
+    {
+        $result = true;
+        $xmlReader = self::createReader($file, [\XMLReader::VALIDATE => true]);
+
+        if (extension_loaded('dom') && extension_loaded('libxml') && function_exists('libxml_use_internal_errors')) {
+            $fileList = $xmlReader->fileList();
+            \libxml_use_internal_errors(true);
+            foreach ($fileList as $innerFile) {
+                $ext = pathinfo($innerFile, PATHINFO_EXTENSION);
+                if (in_array($ext, ['xml', 'rels', 'vml'])) {
+                    $zipFile = 'zip://' . $file . '#' . $innerFile;
+                    $dom = new \DOMDocument;
+                    $dom->load($zipFile);
+                    $errors = \libxml_get_errors();
+                    if ($errors) {
+                        $result = false;
+                    }
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Create sheet object
+     *
+     * @param string $sheetName
+     * @param int|string $sheetId
+     * @param string $file
+     * @param string $path
+     * @param Excel $excel
+     *
+     * @return InterfaceSheetReader
+     */
+    public static function createSheet(string $sheetName, $sheetId, $file, $path, $excel): InterfaceSheetReader
+    {
+        return new Sheet($sheetName, $sheetId, $file, $path, $excel);
+    }
+
+    /**
+     * Create XML reader object
+     *
+     * @param string $file
+     * @param array|null $parserProperties
+     *
+     * @return InterfaceXmlReader
+     */
+    public static function createReader(string $file, ?array $parserProperties = []): InterfaceXmlReader
+    {
+        return new Reader($file, $parserProperties);
+    }
+
+    /**
+     * Converts an alphabetic column index to a numeric
+     *
+     * @param string $colLetter
+     *
+     * @return int
+     */
+    public static function colNum(string $colLetter): int
+    {
+
+        return Helper::colNumber($colLetter);
+    }
+
+    /**
+     * Convert column number to letter
+     *
+     * @param int $colNumber ONE based
+     *
+     * @return string
+     */
+    public static function colLetter(int $colNumber): string
+    {
+
+        return Helper::colLetter($colNumber);
+    }
+
+    /**
+     * Convert date to timestamp
+     *
+     * @param $excelDateTime
+     *
+     * @return int
+     */
+    public function timestamp($excelDateTime): int
+    {
+        $excelDateTime = trim($excelDateTime);
+        if (is_numeric($excelDateTime)) {
+            $d = floor($excelDateTime);
+            $t = $excelDateTime - $d;
+            if ($this->date1904) {
+                $d += 1462; // days since 1904
+            }
+
+            // Adjust for Excel erroneously treating 1900 as a leap year.
+            if ($d <= 59) {
+                $d++;
+            }
+            $t = (abs($d) > 0) ? ($d - 25569) * 86400 + round($t * 86400) : round($t * 86400);
+        }
+        elseif (preg_match('/^[\d\.\-\/:\s]+$/', $excelDateTime)) {
+            if ($this->timezone !== 'UTC') {
+                date_default_timezone_set('UTC');
+            }
+            $t = strtotime($excelDateTime);
+            if ($this->timezone !== 'UTC') {
+                date_default_timezone_set($this->timezone);
+            }
+        }
+        else {
+            // string is not a date
+            $t = 0;
+        }
+
+        return (int)$t;
+    }
+
+    /**
+     * Set date format for reading
+     *
+     * @param string $dateFormat
+     *
+     * @return $this
+     */
+    public function setDateFormat(string $dateFormat): Excel
+    {
+        $this->dateFormat = $dateFormat;
+
+        return $this;
+    }
+
+    /**
+     * Get current date format
+     *
+     * @return string|null
+     */
+    public function getDateFormat(): ?string
+    {
+        return $this->dateFormat;
+    }
+
+    /**
+     * Format date value
+     *
+     * @param mixed $value
+     * @param string|null $format
+     * @param int|null $styleIdx
+     *
+     * @return false|mixed|string
+     */
+    public function formatDate($value, $format = null, $styleIdx = null)
+    {
+        if ($this->dateFormatter && $this->dateFormatter !== true) {
+            return ($this->dateFormatter)($value, $format, $styleIdx);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Set custom date formatter
+     *
+     * @param \Closure|callable|string|bool|null $formatter
+     *
+     * @return $this
+     */
+    public function dateFormatter($formatter): Excel
+    {
+        if ($formatter === false || $formatter === null) {
+            $this->dateFormatter = $formatter;
+        }
+        elseif ($formatter === true) {
+            $this->dateFormatter = function ($value, $format = null, $styleIdx = null) {
+                if ($styleIdx !== null && $pattern = $this->getDateFormatPattern($styleIdx)) {
+                    return gmdate($pattern, $value);
+                }
+                elseif ($format || $this->dateFormat) {
+                    return gmdate($format ?: $this->dateFormat, $value);
+                }
+                return $value;
+            };
+        }
+        elseif (is_string($formatter)) {
+            $this->dateFormat = $formatter;
+            $this->dateFormatter = function ($value, $format = null) {
+                if ($format || $this->dateFormat) {
+                    return gmdate($format ?: $this->dateFormat, $value);
+                }
+                return $value;
+            };
+        }
+        else {
+            $this->dateFormatter = $formatter;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Get date formatter
+     *
+     * @return callable|\Closure|bool|null
+     */
+    public function getDateFormatter()
+    {
+        return $this->dateFormatter;
+    }
+
+    /**
+     * Get style array by style index
+     *
+     * @param int $styleIdx
+     *
+     * @return array
+     */
+    public function styleByIdx($styleIdx): array
+    {
+        return $this->styles['cellXfs'][$styleIdx] ?? [];
+    }
+
+    /**
+     * Get string by index
+     *
+     * @param int $stringId
+     *
+     * @return string|null
+     */
+    public function sharedString($stringId): ?string
+    {
+        return $this->sharedStrings[$stringId] ?? null;
+    }
+
+    /**
+     * Get defined names of workbook
+     *
+     * @return array
+     */
+    public function getDefinedNames(): array
+    {
+        return $this->names;
+    }
+
+    /**
+     * Get names array of all sheets
+     *
+     * @return array
+     */
+    public function getSheetNames(): array
+    {
+        $result = [];
+        foreach ($this->sheets as $sheetId => $sheet) {
+            $result[$sheetId] = $sheet->name();
+        }
+        return $result;
+    }
+
+    /**
+     * Get current or specified sheet
+     *
+     * @param string|null $name
+     *
+     * @return Sheet|null
+     */
+    public function sheet(?string $name = null): ?Sheet
+    {
+        $resultId = null;
+        if (!$name) {
+            $resultId = $this->defaultSheetId;
+        }
+        else {
+            foreach ($this->sheets as $sheetId => $sheet) {
+                if ($sheet->isName($name)) {
+                    $resultId = $sheetId;
+                    break;
+                }
+            }
+        }
+        if ($resultId && isset($this->sheets[$resultId])) {
+            return $this->sheets[$resultId];
+        }
+
+        return null;
+    }
+
+    /**
+     * Get sheet object by name and optionally set read area and options
+     *
+     * @param string|null $name
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function getSheet(?string $name = null, ?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheet = null;
+        if (!$name) {
+            $sheet = $this->sheet();
+        }
+        else {
+            foreach ($this->sheets as $foundSheet) {
+                if ($foundSheet->isName($name)) {
+                    $sheet = $foundSheet;
+                    break;
+                }
+            }
+            if (!$sheet) {
+                throw new Exception('Sheet name "' . $name . '" not found');
+            }
+        }
+
+        if ($areaRange) {
+            $sheet->setReadArea($areaRange, $firstRowKeys);
+        }
+
+        return $sheet;
+    }
+
+    /**
+     * Returns a sheet by ID
+     *
+     * @param int $sheetId
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function getSheetById(int $sheetId, ?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        if (!isset($this->sheets[$sheetId])) {
+            throw new Exception('Sheet ID "' . $sheetId . '" not found');
+        }
+        if ($areaRange) {
+            $this->sheets[$sheetId]->setReadArea($areaRange, $firstRowKeys);
+        }
+
+        return $this->sheets[$sheetId];
+    }
+
+    /**
+     * Returns the first sheet as default
+     *
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function getFirstSheet(?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheetId = array_key_first($this->sheets);
+        $sheet = $this->sheets[$sheetId];
+        if ($areaRange) {
+            $sheet->setReadArea($areaRange, $firstRowKeys);
+        }
+
+        return $sheet;
+    }
+
+    /**
+     * Selects default sheet by name
+     *
+     * @param string $name
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function selectSheet(string $name, ?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheet = $this->getSheet($name, $areaRange, $firstRowKeys);
+        $this->defaultSheetId = $sheet->id();
+
+        return $sheet;
+    }
+
+    /**
+     * Selects default sheet by ID
+     *
+     * @param int $sheetId
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function selectSheetById(int $sheetId, ?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheet = $this->getSheetById($sheetId, $areaRange, $firstRowKeys);
+        $this->defaultSheetId = $sheet->id();
+
+        return $sheet;
+    }
+
+    /**
+     * Selects the first sheet as default
+     *
+     * @param string|null $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function selectFirstSheet(?string $areaRange = null, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheet = $this->getFirstSheet($areaRange, $firstRowKeys);
+        $this->defaultSheetId = $sheet->id();
+
+        return $sheet;
+    }
+
+    /**
+     * Array of all sheets
+     *
+     * @return Sheet[]
+     */
+    public function sheets(): array
+    {
+        return $this->sheets;
+    }
+
+    /**
+     * Set top left and right bottom of read area
+     *
+     * @param string $areaRange
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function setReadArea(string $areaRange, ?bool $firstRowKeys = false): Sheet
+    {
+        $sheet = $this->sheets[$this->defaultSheetId];
+        if (preg_match('/^\w+$/', $areaRange)) {
+            foreach ($this->getDefinedNames() as $name => $range) {
+                if ($name === $areaRange) {
+                    [$sheetName, $definedRange] = explode('!', $range);
+                    $sheet = $this->selectSheet($sheetName);
+                    $areaRange = $definedRange;
+                    break;
+                }
+            }
+        }
+
+        return $sheet->setReadArea($areaRange, $firstRowKeys);
+    }
+
+    /**
+     * Set top left of read area
+     *
+     * @param string $topLeftCell
+     * @param bool|null $firstRowKeys
+     *
+     * @return Sheet
+     */
+    public function from(string $topLeftCell, ?bool $firstRowKeys = false): Sheet
+    {
+        return $this->setReadArea($topLeftCell, $firstRowKeys);
+    }
+
+    /**
+     * Reads cell values and passes them to a callback function
+     *
+     * @param callback $callback
+     * @param int|null $resultMode
+     * @param bool|null $styleIdxInclude
+     */
+    public function readCallback(callable $callback, ?int $resultMode = null, ?bool $styleIdxInclude = null)
+    {
+        $this->sheets[$this->defaultSheetId]->readCallback($callback, [], $resultMode, $styleIdxInclude);
+    }
+
+    /**
+     * Returns cell values as a two-dimensional array from default sheet [row][col]
+     *
+     *  readRows()
+     *  readRows(true)
+     *  readRows(false, Excel::KEYS_ZERO_BASED)
+     *  readRows(Excel::KEYS_ZERO_BASED | Excel::KEYS_RELATIVE)
+     *
+     * @param array|bool|int|null $columnKeys
+     * @param int|null $resultMode
+     * @param bool|null $styleIdxInclude
+     *
+     * @return array
+     */
+    public function readRows($columnKeys = [], ?int $resultMode = null, ?bool $styleIdxInclude = null): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readRows($columnKeys, $resultMode, $styleIdxInclude);
+    }
+
+    /**
+     * Returns cell values and styles as a two-dimensional array from default sheet [row][col]
+     *
+     * @param array|bool|int|null $columnKeys
+     * @param int|null $resultMode
+     *
+     * @return array
+     */
+    public function readRowsWithStyles($columnKeys = [], ?int $resultMode = null): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readRowsWithStyles($columnKeys, $resultMode);
+    }
+
+    /**
+     * Returns cell values as a two-dimensional array from default sheet [col][row]
+     *
+     * @param array|bool|int|null $columnKeys
+     * @param int|null $resultMode
+     *
+     * @return array
+     */
+    public function readColumns($columnKeys = null, ?int $resultMode = null): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readColumns($columnKeys, $resultMode);
+    }
+
+    /**
+     * Returns cell values and styles as a two-dimensional array from default sheet [col][row]
+     *
+     * @param array|bool|int|null $columnKeys
+     * @param int|null $resultMode
+     *
+     * @return array
+     */
+    public function readColumnsWithStyles($columnKeys = null, ?int $resultMode = null): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readColumnsWithStyles($columnKeys, $resultMode);
+    }
+
+    /**
+     * Returns the values of all cells as array
+     *
+     * @return array
+     */
+    public function readCells(): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readCells();
+    }
+
+    /**
+     * Returns the values and styles of all cells as array
+     *
+     * @return array
+     */
+    public function readCellsWithStyles(): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readCellsWithStyles();
+    }
+
+    /**
+     * Returns the styles of all cells as array
+     *
+     * @param bool|null $flat
+     *
+     * @return array
+     */
+    public function readCellStyles(?bool $flat = false): array
+    {
+        return $this->sheets[$this->defaultSheetId]->readCellStyles($flat);
+    }
+
+    /**
+     * Get list of inner files in XLSX
+     *
+     * @return array
+     */
+    public function innerFileList(): array
+    {
+        return $this->fileList;
+    }
+
+    /**
+     * Returns TRUE if the workbook contains an any draw objects (not images only)
+     *
+     * @return bool
+     */
+    public function hasDrawings(): bool
+    {
+        return !empty($this->relations['drawings']);
+    }
+
+    /**
+     * Returns TRUE if any sheet contains an image object
+     *
+     * @return bool
+     */
+    public function hasImages(): bool
+    {
+        if ($this->hasDrawings()) {
+            foreach ($this->sheets as $sheet) {
+                if ($sheet->countImages()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get list of media image files in the workbook
+     *
+     * @return array
+     */
+    public function mediaImageFiles(): array
+    {
+        $result = [];
+        if (!empty($this->relations['media'])) {
+            foreach ($this->relations['media'] as $mediaFile) {
+                $extension = strtolower(pathinfo($mediaFile, PATHINFO_EXTENSION));
+                if (in_array($extension, ['jpg', 'jpeg', 'png', 'bmp', 'ico', 'webp', 'tif', 'tiff', 'gif'])) {
+                    $result[] = basename($mediaFile);
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Returns the total count of images in the workbook
+     *
+     * @return int
+     */
+    public function countImages(): int
+    {
+        if ($this->countImages === -1) {
+            $this->countImages = 0;
+            if ($this->hasDrawings() || $this->mediaImageFiles()) {
+                foreach ($this->sheets as $sheet) {
+                    $this->countImages += $sheet->countImages();
+                }
+            }
+        }
+
+        return $this->countImages;
+    }
+
+    /**
+     * Get the list of images from the workbook
+     *
+     * @return array
+     */
+    public function getImageList(): array
+    {
+        $result = [];
+        if ($this->countImages()) {
+            foreach ($this->sheets as $sheet) {
+                $result[$sheet->name()] = $sheet->getImageList();
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Count "extra" images (images that are in the media folder but not in the drawings)
+     *
+     * @return int
+     */
+    public function countExtraImages(): int
+    {
+        $drawingImageFiles = [];
+        if ($this->hasDrawings()) {
+            foreach ($this->sheets as $sheet) {
+                $imageFiles = $sheet->_getDrawingsImageFiles();
+                if ($imageFiles) {
+                    $drawingImageFiles += $imageFiles;
+                }
+            }
+        }
+        $imageFiles = $this->mediaImageFiles();
+
+        return (count($imageFiles) - count($drawingImageFiles));
+    }
+
+    /**
+     * Returns TRUE if there are any "extra" images
+     *
+     * @return bool
+     */
+    public function hasExtraImages(): bool
+    {
+        return $this->countExtraImages() > 0;
+    }
+
+    /**
+     * Read all workbook styles
+     *
+     * @return array
+     */
+    public function readStyles(): array
+    {
+        if (!isset($this->styles['_'])) {
+            $this->styles['_'] = [];
+            $this->_loadCompleteStyles();
+        }
+
+        return $this->styles['_'];
+    }
+
+    /**
+     * Get complete style by style index
+     *
+     * @param int $styleIdx
+     * @param bool|null $flat
+     *
+     * @return array
+     */
+    public function getCompleteStyleByIdx(int $styleIdx, ?bool $flat = false): array
+    {
+        static $completedStyles = [];
+
+        if (![$this->file]) {
+            return [];
+        }
+
+        if (!isset($completedStyles[$this->file][$styleIdx])) {
+            if ($styleIdx !== 0) {
+                $result = $this->getCompleteStyleByIdx(0);
+            }
+            else {
+                $result = [];
+            }
+            $styles = $this->readStyles();
+            if (isset($styles['cellXfs'][$styleIdx])) {
+                // Excel first takes the style settings with the xfId number from <cellStyleXfs>
+                // and then applies the changes specified directly in <xf>
+                $baseStyleId = $styles['cellXfs'][$styleIdx]['xfId'] ?? -1;
+                if ($baseStyleId >= 0 && isset($styles['cellStyleXfs'][$baseStyleId])) {
+                    $baseStyle = $styles['cellStyleXfs'][$baseStyleId];
+                }
+                else {
+                    $baseStyle = [];
+                }
+                $result = array_replace_recursive($result, $baseStyle, $styles['cellXfs'][$styleIdx]);
+                if (isset($result['xfId'])) {
+                    unset($result['xfId']);
+                }
+            }
+
+            if (isset($result['numFmtId']) && isset($styles['numFmts'][$result['numFmtId']])) {
+                if (isset($result['format'])) {
+                    $result['format'] = array_replace_recursive($result['format'], $styles['numFmts'][$result['numFmtId']]);
+                }
+                else {
+                    $result['format'] = $styles['numFmts'][$result['numFmtId']];
+                }
+                unset($result['numFmtId']);
+            }
+
+            if (isset($result['fontId']) && isset($styles['fonts'][$result['fontId']])) {
+                if (isset($result['font'])) {
+                    $result['font'] = array_replace_recursive($result['font'], $styles['fonts'][$result['fontId']]);
+                }
+                else {
+                    $result['font'] = $styles['fonts'][$result['fontId']];
+                }
+                unset($result['fontId']);
+            }
+
+            if (isset($result['fillId']) && isset($styles['fills'][$result['fillId']])) {
+                if (isset($result['fill'])) {
+                    $result['fill'] = array_replace_recursive($result['fill'], $styles['fills'][$result['fillId']]);
+                }
+                else {
+                    $result['fill'] = $styles['fills'][$result['fillId']];
+                }
+                unset($result['fillId']);
+            }
+
+            if (isset($result['borderId']) && isset($styles['borders'][$result['borderId']])) {
+                if (isset($result['border'])) {
+                    $result['border'] = array_replace_recursive($result['border'], $styles['borders'][$result['borderId']]);
+                }
+                else {
+                    $result['border'] = $styles['borders'][$result['borderId']];
+                }
+                unset($result['borderId']);
+            }
+
+            $completedStyles[$this->file][$styleIdx] = $result;
+        }
+        else {
+            $result = $completedStyles[$this->file][$styleIdx];
+        }
+
+        if ($flat && $result) {
+            $result = array_merge(...array_values($result));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Get format pattern by style index
+     *
+     * @param int $styleIdx
+     *
+     * @return mixed|string
+     */
+    public function getFormatPattern(int $styleIdx)
+    {
+        $style = $this->getCompleteStyleByIdx($styleIdx);
+
+        return $style['format']['format-pattern'] ?? '';
+    }
+
+    /**
+     * Convert Excel date format pattern to PHP date format pattern
+     *
+     * @param string $pattern
+     *
+     * @return string|null
+     */
+    public function _convertDateFormatPattern($pattern): ?string
+    {
+        static $patterns = [];
+
+        if (isset($patterns[$pattern])) {
+            return $patterns[$pattern];
+        }
+
+        if ($this->_isDatePattern(null, $pattern) && preg_match('/^(\[.+])?([^;]+)(;.*)?/', $pattern, $m)) {
+            if (strpos($m[2], 'AM/PM')) {
+                $am = true;
+                $pattern = str_replace('AM/PM', 'A', $m[2]);
+            }
+            elseif (strpos($m[1], 'am/pm')) {
+                $am = true;
+                $pattern = str_replace('am/pm', 'a', $m[2]);
+            }
+            else {
+                $am = false;
+                $pattern = $m[2];
+            }
+            $pattern = str_replace(['\\ ', '\\-', '\\/'], [' ', '-', '/'], $pattern);
+            $pattern = preg_replace(['/^mm(\W)s/', '/h(\W)mm$/', '/h(\W)mm([^m])/', '/([^m])mm(\W)s/'], ['i$1s', 'h$1i', 'h$1i$2', '$1i$1s'], $pattern);
+            if ($am) {
+                $pattern = str_replace(['hh', 'h'], ['h', 'g'], $pattern);
+            }
+            else {
+                $pattern = str_replace(['hh', 'h'], ['H', 'G'], $pattern);
+            }
+            if (strpos($pattern, 'dd') !== false) {
+                $pattern = str_replace('dd', 'd', $pattern);
+            }
+            else {
+                $pattern = str_replace('d', 'j', $pattern);
+            }
+            $pattern = str_replace('mmmm', 'F', $pattern);
+            $pattern = str_replace('mmm', 'M', $pattern);
+            if (strpos($pattern, 'mm') !== false) {
+                $pattern = str_replace('mm', 'm', $pattern);
+            }
+            else {
+                $pattern = str_replace('m', 'n', $pattern);
+            }
+            $convert = [
+                'ss' => 's',
+                'dddd' => 'l',
+                'ddd' => 'D',
+                'mmmm' => 'F',
+                'mmm' => 'M',
+                'yyyy' => 'Y',
+                'yy' => 'y',
+            ];
+            $patterns[$pattern] = str_replace(array_keys($convert), array_values($convert), $pattern);
+
+            return $patterns[$pattern];
+        }
+
+        return null;
+    }
+
+    /**
+     * Get PHP date format pattern by style index
+     *
+     * @param int $styleIdx
+     *
+     * @return string|null
+     */
+    public function getDateFormatPattern(int $styleIdx): ?string
+    {
+        $pattern = $this->getFormatPattern($styleIdx);
+        if ($pattern) {
+            return $this->_convertDateFormatPattern($pattern);
+        }
+
+        return null;
+    }
+}
+
+// EOF
