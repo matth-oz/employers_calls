@@ -12,9 +12,9 @@ define('NOT_CHECK_PERMISSIONS', true);
 // подключение служебной части пролога
 require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.php");
 
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/data/settings.php");
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/rest_b24_department.php");
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/callshelper.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/data/settings.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/rest_b24_department.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/callshelper.php");
 
 /*
 	params:
@@ -29,10 +29,29 @@ if(isset($_POST['ajax'])){
 
 	$arResData = [];
 
+	// CSRF: запрос должен идти со страницы приложения (валидный sessid)
+	if(!check_bitrix_sessid()){
+		Callsapp\CallsAppHelper::createJsonResult(['STATUS' => 'error', 'MESS' => ['Неверный токен сессии']]);
+	}
+
 	try{
-		$portalUserId = trim($_POST['portal_user_id']);
-		$callDateFrom = trim($_POST['calls_date_from']).' 00:00:00';
-		$callDateTo = trim($_POST['calls_date_to']).' 00:00:00';
+		$portalUserId = (int)($_POST['portal_user_id'] ?? 0);
+
+		// сотрудник обязан быть из утверждённого списка (закрывает перебор чужих звонков)
+		$employersListPath = $_SERVER['DOCUMENT_ROOT'].'/employers_calls/data/employers_list.php';
+		$employersList = is_file($employersListPath) ? require($employersListPath) : [];
+		if($portalUserId <= 0 || !is_array($employersList) || !array_key_exists($portalUserId, $employersList)){
+			Callsapp\CallsAppHelper::createJsonResult(['STATUS' => 'error', 'MESS' => ['Недопустимый сотрудник']]);
+		}
+
+		// даты строго в формате Y-m-d
+		$dFrom = \DateTime::createFromFormat('Y-m-d', trim($_POST['calls_date_from'] ?? ''));
+		$dTo   = \DateTime::createFromFormat('Y-m-d', trim($_POST['calls_date_to'] ?? ''));
+		if(!$dFrom || !$dTo){
+			Callsapp\CallsAppHelper::createJsonResult(['STATUS' => 'error', 'MESS' => ['Неверный формат даты']]);
+		}
+		$callDateFrom = $dFrom->format('Y-m-d').' 00:00:00';
+		$callDateTo   = $dTo->format('Y-m-d').' 23:59:59';
 
 		$bxDptAPI = new RestB24\RestBx24Department(C_REST_WEB_HOOK_URL);
 
@@ -178,17 +197,51 @@ if(isset($_POST['ajax'])){
 		}
 		
 		$arKeys = array_keys($arCrmEntitiesCalls);
-	
+
+		// Пакетная предзагрузка сущностей CRM (вместо N+1 запросов .get на каждый звонок)
+		$contactIds = array_keys($arCrmEntitiesCalls['CONTACT'] ?? []);
+		$leadIds    = array_keys($arCrmEntitiesCalls['LEAD'] ?? []);
+		$contacts = $leads = $companies = [];
+		$companyIds = [];
+
+		foreach(array_chunk($contactIds, 50) as $chunk){
+			$res = $bxDptAPI->callMethod('crm.contact.list', [
+				'FILTER' => ['ID' => $chunk],
+				'SELECT' => ['ID', 'NAME', 'SECOND_NAME', 'LAST_NAME', 'COMPANY_ID'],
+			]);
+			foreach(($res['result'] ?? []) as $c){
+				$contacts[$c['ID']] = $c;
+				if((int)$c['COMPANY_ID'] > 0){ $companyIds[(int)$c['COMPANY_ID']] = true; }
+			}
+		}
+
+		foreach(array_chunk($leadIds, 50) as $chunk){
+			$res = $bxDptAPI->callMethod('crm.lead.list', [
+				'FILTER' => ['ID' => $chunk],
+				'SELECT' => ['ID', 'TITLE', 'COMPANY_ID'],
+			]);
+			foreach(($res['result'] ?? []) as $l){
+				$leads[$l['ID']] = $l;
+				if((int)$l['COMPANY_ID'] > 0){ $companyIds[(int)$l['COMPANY_ID']] = true; }
+			}
+		}
+
+		foreach(array_chunk(array_keys($companyIds), 50) as $chunk){
+			$res = $bxDptAPI->callMethod('crm.company.list', [
+				'FILTER' => ['ID' => $chunk],
+				'SELECT' => ['ID', 'TITLE'],
+			]);
+			foreach(($res['result'] ?? []) as $co){
+				$companies[$co['ID']] = $co['TITLE'];
+			}
+		}
+
 		foreach($arKeys as $key){
 
 			foreach($arCrmEntitiesCalls[$key] as &$arCrmEntityCall){
 				$entId = $arCrmEntityCall['ENTITY_ID'];
 				if($key == 'CONTACT'){
-					$resEntity = $bxDptAPI->callMethod('crm.contact.get',
-						[
-							'ID' => $entId
-						]
-					);
+					$resEntity = ['result' => $contacts[$entId] ?? []];
 
 					if(!empty($resEntity['result'])){
 
@@ -206,14 +259,8 @@ if(isset($_POST['ajax'])){
 						
 						if($companyId > 0){
 							$arCrmEntityCall['COMPANY_ID'] = $companyId;
-							$resCompany = $bxDptAPI->callMethod('crm.company.get',
-								[
-									'ID' => $companyId
-								]
-							);
-
-							if(!empty($resCompany['result'])){
-								$arCrmEntityCall['COMPANY_TITLE'] = $resCompany['result']['TITLE'];
+							if(isset($companies[$companyId])){
+								$arCrmEntityCall['COMPANY_TITLE'] = $companies[$companyId];
 							}
 						}
 					}
@@ -221,31 +268,21 @@ if(isset($_POST['ajax'])){
 				}
 
 				if($key == 'LEAD'){
-					$resEntity = $bxDptAPI->callMethod('crm.lead.get',
-						[
-							'ID' => $entId
-						]
-					);
+					$resEntity = ['result' => $leads[$entId] ?? []];
 
 					if(!empty($resEntity['result'])){
 						$arCrmEntityCall['ENTITY_TITLE'] = $resEntity['result']['TITLE'];
-						
+
 						$companyId = (int) $resEntity['result']['COMPANY_ID'];
 
 						if($companyId > 0){
 							$arCrmEntityCall['COMPANY_ID'] = $companyId;
-							
-							$resCompany = $bxDptAPI->callMethod('crm.company.get',
-								[
-									'ID' => $companyId
-								]
-							);
-						}					
 
-						if(!empty($resCompany['result'])){
-							$resEntity['result']['COMPANY_TITLE'] = $resCompany['result']['TITLE'];
+							if(isset($companies[$companyId])){
+								$arCrmEntityCall['COMPANY_TITLE'] = $companies[$companyId];
+							}
 						}
-						
+
 					}
 				}
 
@@ -301,16 +338,16 @@ if(isset($_POST['ajax'])){
 		$arResData['STATUS'] = 'success';
 		$arResData['RESULT'] = $arResult;
 
-		$source = time().'.php';
+		$source = bin2hex(random_bytes(16)).'.json';
 		$arResData['SOURCE'] = $source;
 
-		Callsapp\CallsAppHelper::saveArrayToFile($arResult, $_SERVER["DOCUMENT_ROOT"].'/calls_gkcit_app/tmp/'.$source);
+		Callsapp\CallsAppHelper::saveJsonToFile($arResult, $_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$source);
 
 		/*$dataToSave = '<? return ';
 		$dataToSave .= var_export($arResult, true);
 		$dataToSave .= ';';
 
-		file_put_contents($_SERVER["DOCUMENT_ROOT"].'/calls_gkcit_app/tmp/'.$source, $dataToSave, FILE_APPEND|LOCK_EX);*/
+		file_put_contents($_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$source, $dataToSave, FILE_APPEND|LOCK_EX);*/
 
 		}
 		else{
@@ -318,9 +355,9 @@ if(isset($_POST['ajax'])){
 			$arResData['MESS'][] = 'Не указан сотрудник';
 		}
 
-	}catch(Exception $e){
-		echo "Произошла ошибка: " . $e->getMessage();
-	}	
+	}catch(\Throwable $e){
+		$arResData = ['STATUS' => 'error', 'MESS' => ['Ошибка обращения к Bitrix24: ' . $e->getMessage()]];
+	}
 }
 else{
 	die('Скрипт не может быть вызван в браузере');

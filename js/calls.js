@@ -11,6 +11,7 @@ function CallsTableHandler(p){
     this.jExportXls = p.jExportXls;
     this.jCallsRowsRoot = p.jCallsRowsRoot;
     this.jCallsTable = p.jCallsTable;
+    this.sessid = p.sessid;
 
     this.ajaxHandlerUrl = '';
 
@@ -89,6 +90,7 @@ function CallsTableHandler(p){
 
                 let formData = new FormData(jCallsFilter);
                 formData.append('ajax', 'y');
+                formData.append('sessid', o.sessid);
 
                 jProcessBlock.classList.remove('dn');
 
@@ -117,7 +119,7 @@ function CallsTableHandler(p){
                         jProcessBlock.classList.add('dn');
                         jProcessBlock.children[0].classList.remove('visually-hidden');
                         jBfTbl.classList.remove('vh');
-                        let href = './calls_export.php?ds=' + data.SOURCE;
+                        let href = './calls_export.php?ds=' + encodeURIComponent(data.SOURCE) + '&sessid=' + encodeURIComponent(o.sessid);
                         jExportXls.setAttribute('href', href);
                     }
                     else{

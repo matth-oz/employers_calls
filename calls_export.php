@@ -9,11 +9,30 @@ define('NOT_CHECK_PERMISSIONS', true);
 require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.php");
     $arResData = [];
 
-    $fileName = trim($_REQUEST['ds']);
+    // CSRF: ссылка на экспорт формируется на странице приложения (валидный sessid)
+    if(!check_bitrix_sessid()){
+        ShowError('Неверный токен сессии');
+        require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/epilog_after.php");
+        die();
+    }
 
-    if(file_exists($_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$fileName)){
+    // строгая валидация имени файла: только <32 hex>.json и физически внутри tmp/
+    $fileName = basename(trim((string)($_REQUEST['ds'] ?? '')));
+    $tmpDir   = $_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp';
+    $realPath = realpath($tmpDir.'/'.$fileName);
+    $realBase = realpath($tmpDir);
 
-        $arData = require($_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$fileName);
+    if(!preg_match('/^[a-f0-9]{32}\.json$/', $fileName)
+        || $realPath === false || $realBase === false
+        || strpos($realPath, $realBase.DIRECTORY_SEPARATOR) !== 0){
+        ShowError('Файл не найден');
+        require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/epilog_after.php");
+        die();
+    }
+
+    $arData = json_decode(file_get_contents($realPath), true);
+
+    if(is_array($arData)){
 
         require_once($_SERVER["DOCUMENT_ROOT"].'/employers_calls/libs/vendor/autoload.php');
  
@@ -63,7 +82,7 @@ require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.ph
             $sheet->writeRow($arDataItem, $rowOptions);
         }
 
-        $newXlsPath = './calls_'.time().'.xlsx';
+        $newXlsPath = sys_get_temp_dir().'/calls_'.bin2hex(random_bytes(8)).'.xlsx';
         $excel->save($newXlsPath);
 
         if(file_exists($newXlsPath)){
@@ -78,11 +97,10 @@ require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.ph
             readfile($newXlsPath);
     
             unlink($newXlsPath);
-            unlink($_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$fileName); 
+            unlink($realPath);
         }
         else{            
-            $errMess = 'Файл с данными '.$_SERVER["DOCUMENT_ROOT"].'/employers_calls/tmp/'.$fileName.' не найден!';
-            ShowError($errMess);
+            ShowError('Не удалось сформировать файл выгрузки.');
         }
     }
 

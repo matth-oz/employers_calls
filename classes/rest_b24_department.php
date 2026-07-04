@@ -1,7 +1,7 @@
 <?php
 
 namespace Mattweb\Restb24;
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/rest_b24.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/rest_b24.php");
 
 class RestBx24Department extends RestBx24{
 

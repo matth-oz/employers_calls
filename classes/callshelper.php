@@ -39,6 +39,18 @@ class CallsAppHelper{
         return $res;
     }
 
+    /**
+     * Сохранение данных отчёта в JSON-файл (без исполняемого PHP — безопасно для последующего чтения).
+     */
+    public static function saveJsonToFile(array $arData, string $pathToSave): int|bool
+    {
+        return file_put_contents(
+            $pathToSave,
+            json_encode($arData, JSON_UNESCAPED_UNICODE),
+            LOCK_EX
+        );
+    }
+
     public static function createJsonResult(array $arResData, bool $die = true): void
     {
         header('Content-Type: application/json; charset='.LANG_CHARSET);

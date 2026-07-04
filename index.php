@@ -19,7 +19,7 @@
     <title>Звонки сотрудника за месяц</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
     <link href="./css/calls.css" rel="stylesheet">
-    <script src="./js/calls.js"></script>
+    <script src="./js/calls.js?v=2"></script>
   </head>
   <body>
 
@@ -110,6 +110,7 @@
                 jCallsTable: '.j-calls-table',
                 jExportXls: '.j-export-xls',
                 jCallsRowsRoot: '.j-calls-rows-root',
+                sessid: '<?=bitrix_sessid()?>',
             });
 
             callsTableHandler.init();

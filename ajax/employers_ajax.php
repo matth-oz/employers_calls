@@ -2,12 +2,12 @@
 use Mattweb\RestB24;
 use Mattweb\Callsapp;
 
-$EMPLOYERS_LIST_PATH = $_SERVER['DOCUMENT_ROOT'].'/calls_gkcit_app/data/employers_list.php';
+$EMPLOYERS_LIST_PATH = $_SERVER['DOCUMENT_ROOT'].'/employers_calls/data/employers_list.php';
 
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/data/settings.php");
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/rest_b24_department.php");
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/departmenthelper.php");
-require_once($_SERVER["DOCUMENT_ROOT"]."/calls_gkcit_app/classes/callshelper.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/data/settings.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/rest_b24_department.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/departmenthelper.php");
+require_once($_SERVER["DOCUMENT_ROOT"]."/employers_calls/classes/callshelper.php");
 
 define('NO_AGENT_CHECK', true);
 define('STOP_STATISTICS', true);
@@ -29,7 +29,15 @@ define('NOT_CHECK_PERMISSIONS', true);
 // подключение служебной части пролога
 require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.php");
 
-// Callsapp\CallsAppHelper::createJsonResult($_POST);
+// Эндпоинт меняет список сотрудников (он же — белый список охвата отчёта),
+// поэтому требует авторизации (как и страница admin_employers.php под NEED_AUTH) + CSRF.
+global $USER;
+if(!isset($USER) || !$USER->IsAuthorized()){
+	Callsapp\CallsAppHelper::createJsonResult(['STATUS' => 'error', 'MESS' => ['Требуется авторизация']]);
+}
+if(!check_bitrix_sessid()){
+	Callsapp\CallsAppHelper::createJsonResult(['STATUS' => 'error', 'MESS' => ['Неверный токен сессии']]);
+}
 
 if(isset($_POST['ajax'])){
 	if(isset($_POST['act'])){

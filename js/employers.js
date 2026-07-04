@@ -8,6 +8,7 @@ class Employers{
         this.empSaveBtnSelector = p.empSaveBtnSelector;
         this.empResetBtnSelector = p.empResetBtnSelector;
         this.currenChecked = p.currenChecked;
+        this.sessid = p.sessid;
 
         this.uncheckedEmployers = [];
     }
@@ -47,6 +48,7 @@ class Employers{
 
         let fData = new FormData();
         fData.append('ajax', 'y');
+        fData.append('sessid', this.sessid);
 
         switch(act){
             case 'addRemEmp':
@@ -141,6 +143,7 @@ class Employers{
 
                 let fData = new FormData();
                 fData.append('ajax', 'y');
+                fData.append('sessid', this.sessid);
                 fData.append('depId', depId);
                 fData.append('act', 'listEmps');
 

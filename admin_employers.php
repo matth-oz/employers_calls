@@ -140,6 +140,7 @@ $defaultDepartmentId = $tree[0]['ID'];
                 empSaveBtnSelector: '.j-emp-save',
                 empResetBtnSelector: '.j-emp-reset',
                 currenChecked: <?=CUtil::PhpToJSObject($arCurrentChecked)?>,
+                sessid: '<?=bitrix_sessid()?>',
             });
 
             employers.init();
